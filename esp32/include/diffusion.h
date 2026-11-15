@@ -27,20 +27,18 @@ static constexpr int kNumTimesteps = NUM_TRAINING_TIMESTEPS;
 // - alphas_cumprod for the DDIM timesteps
 // - sqrt(alphas_cumprod) and sqrt(1 - alphas_cumprod) for those timesteps
 
-// DDIM timestep sequences for different step counts
-// Generated from: np.arange(0, 100, 100//steps)[::-1]
-static constexpr int kDDIMTimesteps8[8] = {99, 87, 74, 62, 49, 37, 24, 12};
-static constexpr int kDDIMTimesteps16[16] = {99, 93, 87, 81, 74, 68, 62, 56, 49, 43, 37, 31, 24, 18, 12, 6};
-static constexpr int kDDIMTimesteps32[32] = {99, 96, 93, 90, 87, 84, 81, 78, 74, 71, 68, 65, 62, 59, 56, 53, 
-                                              49, 46, 43, 40, 37, 34, 31, 28, 24, 21, 18, 15, 12, 9, 6, 3};
-
-// Pointers to timestep arrays
-static constexpr const int* kDDIMTimestepsPtr[] = {nullptr, nullptr, kDDIMTimesteps8, nullptr, nullptr, 
-                                              nullptr, nullptr, nullptr, nullptr, nullptr,
-                                              nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                                              kDDIMTimesteps16};
-static constexpr int kDDIMTimestepsLengths[] = {0, 0, 8, 0, 0, 0, 0, 0, 0, 0,
-                                                0, 0, 0, 0, 0, 0, 16};
+// DDIM timestep sequences for different step counts.
+// Generated exactly like DDIMScheduler._setup_ddim_timesteps():
+//   step_ratio = 100 // steps
+//   timesteps = np.arange(0, 100, step_ratio)[:steps][::-1]
+// The final element is always 0 so the last DDIM step targets x_0.
+static constexpr int kDDIMTimesteps8[8] = {84, 72, 60, 48, 36, 24, 12, 0};
+static constexpr int kDDIMTimesteps16[16] = {90, 84, 78, 72, 66, 60, 54, 48,
+                                             42, 36, 30, 24, 18, 12, 6, 0};
+static constexpr int kDDIMTimesteps32[32] = {93, 90, 87, 84, 81, 78, 75, 72,
+                                             69, 66, 63, 60, 57, 54, 51, 48,
+                                             45, 42, 39, 36, 33, 30, 27, 24,
+                                             21, 18, 15, 12, 9, 6, 3, 0};
 
 // Alphas cumprod for all 100 timesteps (linear schedule)
 // Computed from: betas = linspace(0.0001, 0.02, 100); alphas = 1 - betas; cumprod(alphas)

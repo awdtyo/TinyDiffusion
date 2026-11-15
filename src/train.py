@@ -190,6 +190,11 @@ class DiffusionTrainer:
         self.model.save(final_model_path)
         print(f"Final model saved to {final_model_path}")
         
+        # The inference model is a separate functional CNN.  It must receive
+        # the trained convolution weights before export, otherwise the TFLite
+        # artifact contains a freshly initialized (random) network.
+        self.inference_model.set_weights(self.model.cnn.get_weights())
+        
         # Save inference model
         inference_path = os.path.join(self.checkpoint_dir, 'inference_model.keras')
         self.inference_model.save(inference_path)

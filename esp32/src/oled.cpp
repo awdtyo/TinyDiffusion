@@ -128,22 +128,15 @@ void oled_draw_digit(const float* image, int class_label,
   for (int sy = 0; sy < src_h; sy++) {
     for (int sx = 0; sx < src_w; sx++) {
       float val = image[sy * src_w + sx];
-      // Normalize from [-1, 1] to [0, 1]
+      // Fixed mapping used during training/rendering: [-1, 1] -> [0, 1].
+      // Do NOT normalize per image; that would hide amplitude errors.
       val = (val + 1.0f) * 0.5f;
       if (val < 0.0f) val = 0.0f;
       if (val > 1.0f) val = 1.0f;
       
-      // Threshold for monochrome display
-      // Use dithering for better visual quality
-      bool pixel_on = false;
-      if (val > 0.5f) {
-        pixel_on = true;
-      } else if (val > 0.25f) {
-        // Ordered dithering pattern
-        pixel_on = ((sx + sy) & 1) == 0;
-      } else if (val > 0.1f) {
-        pixel_on = ((sx + sy * 2) & 3) == 0;
-      }
+      // Monochrome threshold. Training images are -1 for background and +1
+      // for strokes, so 0.5 is the natural decision boundary.
+      const bool pixel_on = (val >= 0.5f);
       
       if (pixel_on) {
         // Draw scaled block

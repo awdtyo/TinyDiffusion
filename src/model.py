@@ -70,6 +70,7 @@ def build_conditional_cnn(config: Dict[str, Any]) -> Model:
     return model
 
 
+@tf.keras.utils.register_keras_serializable()
 class ConditionalDiffusionModel(Model):
     """
     Wrapper model that handles the diffusion training logic.

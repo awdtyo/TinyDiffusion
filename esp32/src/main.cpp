@@ -17,6 +17,7 @@
  */
 
 #include <Arduino.h>
+#include <cmath>
 #include <cstring>
 #include <esp_random.h>
 #include "config.h"
@@ -43,6 +44,10 @@ static int ddim_timesteps[MAX_SAMPLING_STEPS];
 // ==================== State ====================
 static int current_sampling_steps = DEFAULT_SAMPLING_STEPS;
 static float current_eta = DDIM_ETA;
+
+// Temporary per-step sampling diagnostics. Set to 0 once the numerical path
+// has been validated on hardware.
+#define PRINT_STEP_STATS 1
 
 // ==================== Helper Functions ====================
 
@@ -86,42 +91,87 @@ void init_noise_image(float* x_t) {
 }
 
 /**
+ * Quantize one float conditioning value exactly like Python's quantize_int8():
+ *   q = round(value / scale + zero_point), then clip to [-128, 127]
+ */
+static inline int8_t quantize_model_input(float value) {
+  const float scale = model_runner.get_input_scale();
+  const int32_t zero_point = model_runner.get_input_zero_point();
+  long q = lroundf(value / scale + (float)zero_point);
+  if (q < -128) q = -128;
+  if (q > 127) q = 127;
+  return (int8_t)q;
+}
+
+struct FloatStats {
+  float min_value;
+  float max_value;
+  float mean;
+  float stddev;
+};
+
+static FloatStats compute_stats(const float* data, int count) {
+  FloatStats s = {0.0f, 0.0f, 0.0f, 0.0f};
+  if (count <= 0) return s;
+
+  s.min_value = data[0];
+  s.max_value = data[0];
+  double sum = 0.0;
+  double sum_sq = 0.0;
+  for (int i = 0; i < count; i++) {
+    const float v = data[i];
+    if (v < s.min_value) s.min_value = v;
+    if (v > s.max_value) s.max_value = v;
+    sum += (double)v;
+    sum_sq += (double)v * (double)v;
+  }
+  s.mean = (float)(sum / (double)count);
+  double variance = sum_sq / (double)count - (double)s.mean * (double)s.mean;
+  if (variance < 0.0) variance = 0.0;
+  s.stddev = (float)sqrt(variance);
+  return s;
+}
+
+static void print_tensor_stats(const char* label, const float* data, int count) {
+  const FloatStats s = compute_stats(data, count);
+  Serial.printf("  %-10s min=%+.4f max=%+.4f mean=%+.4f std=%.4f\n",
+                label, s.min_value, s.max_value, s.mean, s.stddev);
+}
+
+/**
  * Prepare model input from x_t, class_label, and timestep
  * 
- * Input layout: [28, 28, 12] = [image(1) + class_maps(10) + timestep(1)]
- * All quantized to INT8
+ * Input layout: [1, 28, 28, 12] NHWC
+ *   0:    noisy image, trained in [-1, 1]
+ *   1-10: spatially broadcast one-hot class maps in {0.0, 1.0}
+ *   11:   spatially broadcast timestep t / NUM_TRAINING_TIMESTEPS
+ * All channels are quantized with the input tensor's runtime scale/zp.
  */
 void prepare_model_input(const float* x_t, int class_label, int timestep, int8_t* model_input) {
-  const int H = MODEL_INPUT_HEIGHT;
-  const int W = MODEL_INPUT_WIDTH;
-  const int num_pixels = H * W;
-  
-  // Channel layout:
-  // 0: noisy image
-  // 1-10: class one-hot maps (10 channels)
-  // 11: timestep map
-  
-  // 1. Noisy image channel (quantized)
+  const int num_pixels = MODEL_INPUT_HEIGHT * MODEL_INPUT_WIDTH;
+
+  // Same 0/1 representation used by tf.one_hot() during training.
+  const int8_t class_on = quantize_model_input(1.0f);
+  const int8_t class_off = quantize_model_input(0.0f);
+
+  // Timestep normalization must match NoiseSchedule.get_timestep_embedding():
+  // t / num_timesteps, without any extra [-1, 1] rescaling.
+  const float t_norm = (float)timestep / (float)NUM_TRAINING_TIMESTEPS;
+  const int8_t t_q = quantize_model_input(t_norm);
+
   for (int i = 0; i < num_pixels; i++) {
-    float val = x_t[i];
-    // Quantize: [-1, 1] -> INT8
-    int8_t q = (int8_t)roundf(val / model_runner.get_input_scale() + model_runner.get_input_zero_point());
-    model_input[i * MODEL_INPUT_CHANNELS + 0] = q;
-  }
-  
-  // 2. Class conditioning maps (10 channels)
-  for (int c = 0; c < 10; c++) {
-    int8_t class_val = (c == class_label) ? 127 : -128;  // Approximate one-hot in INT8
-    for (int i = 0; i < num_pixels; i++) {
-      model_input[i * MODEL_INPUT_CHANNELS + 1 + c] = class_val;
+    int8_t* pixel = &model_input[i * MODEL_INPUT_CHANNELS];
+
+    // 1. Noisy image channel
+    pixel[0] = quantize_model_input(x_t[i]);
+
+    // 2. Class conditioning maps (10 channels), 0/1 as in training
+    for (int c = 0; c < 10; c++) {
+      pixel[1 + c] = (c == class_label) ? class_on : class_off;
     }
-  }
-  
-  // 3. Timestep map (normalized to [0, 1])
-  float t_norm = (float)timestep / NUM_TRAINING_TIMESTEPS;
-  int8_t t_q = (int8_t)roundf((t_norm * 2.0f - 1.0f) / model_runner.get_input_scale() + model_runner.get_input_zero_point());
-  for (int i = 0; i < num_pixels; i++) {
-    model_input[i * MODEL_INPUT_CHANNELS + 11] = t_q;
+
+    // 3. Timestep map
+    pixel[11] = t_q;
   }
 }
 
@@ -181,6 +231,8 @@ bool run_dummy_inference_test() {
  */
 uint32_t generate_digit_local(int class_label, int num_steps, float eta, float* output_buffer) {
   uint32_t start_time = millis();
+  const int image_size =
+      MODEL_OUTPUT_HEIGHT * MODEL_OUTPUT_WIDTH * MODEL_OUTPUT_CHANNELS;
   
   // Get DDIM timesteps
   int n_steps = get_ddim_timesteps(num_steps, ddim_timesteps);
@@ -190,6 +242,17 @@ uint32_t generate_digit_local(int class_label, int num_steps, float eta, float* 
   
   // Show progress on OLED
   oled_draw_progress(0.0f, "Generating...");
+  
+#if PRINT_STEP_STATS
+  Serial.printf("\n=== DDIM start: class=%d steps=%d eta=%.2f ===\n",
+                class_label, n_steps, (double)eta);
+  Serial.printf("Timesteps:");
+  for (int i = 0; i < n_steps; i++) {
+    Serial.printf(" %d", ddim_timesteps[i]);
+  }
+  Serial.println();
+  print_tensor_stats("x_T", x_t_float, image_size);
+#endif
   
   // Denoising loop
   for (int step = 0; step < n_steps; step++) {
@@ -203,17 +266,30 @@ uint32_t generate_digit_local(int class_label, int num_steps, float eta, float* 
     // Prepare model input
     prepare_model_input(x_t_float, class_label, t, model_input_int8);
     
+#if PRINT_STEP_STATS
+    Serial.printf("Step %d/%d: t=%d t_prev=%d\n", step + 1, n_steps, t, t_prev);
+    print_tensor_stats("x_t", x_t_float, image_size);
+#endif
+    
     // Run inference
     if (!model_runner.run_inference(model_input_int8, model_output_int8)) {
-      DEBUG_PRINTLN("Inference failed!");
+      Serial.println("ERROR: Inference failed");
       return 0;
     }
     
     // Dequantize predicted noise
     dequantize_output(model_output_int8, noise_pred_float);
     
+#if PRINT_STEP_STATS
+    print_tensor_stats("noise_pred", noise_pred_float, image_size);
+#endif
+    
     // DDIM step
     ddim_step(x_t_float, noise_pred_float, t, t_prev, eta, x_t_prev_float);
+    
+#if PRINT_STEP_STATS
+    print_tensor_stats("x_next", x_t_prev_float, image_size);
+#endif
     
     // Copy for next iteration
     memcpy(x_t_float, x_t_prev_float, sizeof(x_t_float));
@@ -221,6 +297,16 @@ uint32_t generate_digit_local(int class_label, int num_steps, float eta, float* 
   
   // Final result is in x_t_float
   memcpy(output_buffer, x_t_float, sizeof(x_t_float));
+  
+#if PRINT_STEP_STATS
+  int above_threshold = 0;
+  for (int i = 0; i < image_size; i++) {
+    if (x_t_float[i] >= 0.5f) above_threshold++;
+  }
+  print_tensor_stats("FINAL", x_t_float, image_size);
+  Serial.printf("FINAL pixels >= 0.5: %d / %d (output_buffer=%p)\n",
+                above_threshold, image_size, (void*)output_buffer);
+#endif
   
   uint32_t end_time = millis();
   return end_time - start_time;
@@ -242,6 +328,7 @@ void process_serial_command(String cmd) {
       uint32_t gen_time = generate_digit_local(digit, current_sampling_steps, current_eta, model_output_float);
       
       if (gen_time > 0) {
+        Serial.println("OLED: rendering final post-DDIM sampled image");
         oled_draw_digit(model_output_float, digit, gen_time, current_sampling_steps);
         Serial.printf("OK: Generated digit %d in %lu ms (%d steps)\n", digit, gen_time, current_sampling_steps);
       } else {
@@ -259,6 +346,7 @@ void process_serial_command(String cmd) {
     uint32_t gen_time = generate_digit_local(digit, current_sampling_steps, current_eta, model_output_float);
     
     if (gen_time > 0) {
+      Serial.println("OLED: rendering final post-DDIM sampled image");
       oled_draw_digit(model_output_float, digit, gen_time, current_sampling_steps);
       Serial.printf("OK: Generated random digit %d in %lu ms\n", digit, gen_time);
     } else {
