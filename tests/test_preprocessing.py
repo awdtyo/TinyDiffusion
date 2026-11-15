@@ -97,9 +97,11 @@ def test_prepare_model_input():
 
 def test_quantize_dequantize():
     """Test INT8 quantization round-trip."""
-    x = np.random.randn(100).astype(np.float32)
-    scale = 0.01
-    zero_point = -128
+    # Use symmetric quantization with zero_point=0
+    # With scale=1.0/127, range is [-1.0, 1.0] (approximately)
+    x = np.random.uniform(-1.0, 1.0, 100).astype(np.float32)
+    scale = 1.0 / 127.0
+    zero_point = 0
     
     x_q = quantize_int8(x, scale, zero_point)
     x_dq = dequantize_int8(x_q, scale, zero_point)

@@ -14,7 +14,7 @@ from src.utils import load_config, count_parameters
 
 def test_model_build():
     """Test that model builds correctly."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     model = build_inference_model(config)
     
     assert model is not None
@@ -23,7 +23,7 @@ def test_model_build():
 
 def test_model_input_shape():
     """Test model input shape."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     model = build_inference_model(config)
     
     # Input: [batch, 28, 28, 12]
@@ -32,7 +32,7 @@ def test_model_input_shape():
 
 def test_model_output_shape():
     """Test model output shape."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     model = build_inference_model(config)
     
     # Output: [batch, 28, 28, 1]
@@ -41,7 +41,7 @@ def test_model_output_shape():
 
 def test_model_parameter_count():
     """Test parameter count matches expected ~3,277."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     model = build_inference_model(config)
     
     param_count = count_parameters(model)
@@ -51,7 +51,7 @@ def test_model_parameter_count():
 
 def test_model_forward_pass():
     """Test forward pass with random input."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     model = build_inference_model(config)
     
     # Random input
@@ -64,7 +64,7 @@ def test_model_forward_pass():
 
 def test_model_layers():
     """Test model has correct number of layers."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     model = build_inference_model(config)
     
     # Should have 5 Conv2D + 4 Activation layers = 9 layers (excluding Input)
@@ -79,7 +79,7 @@ def test_model_layers():
 
 def test_model_config_summary():
     """Test config summary."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     summary = get_model_config_summary(config)
     
     assert 'input_shape' in summary

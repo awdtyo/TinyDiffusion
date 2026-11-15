@@ -141,7 +141,7 @@ class DiffusionTrainer:
         
         return callback_list
     
-    def _cosine_decay_schedule(self, epoch: int, lr: float) -> float:
+    def _cosine_decay_schedule(self, epoch: int) -> float:
         """Cosine decay learning rate schedule with warmup."""
         lr_config = self.train_config.get('lr_schedule', {})
         warmup_epochs = lr_config.get('warmup_epochs', 5)

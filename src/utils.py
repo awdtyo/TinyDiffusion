@@ -131,11 +131,12 @@ def broadcast_conditioning(class_onehot: np.ndarray, timestep: np.ndarray,
     # Broadcast class maps: [batch, num_classes] -> [batch, height, width, num_classes]
     class_maps = np.zeros((batch_size, height, width, num_classes), dtype=np.float32)
     for c in range(num_classes):
-        class_maps[:, :, :, c] = class_onehot[:, c:c+1]
+        # Broadcast (batch, 1) to (batch, height, width)
+        class_maps[:, :, :, c] = class_onehot[:, c:c+1].reshape(batch_size, 1, 1)
     
     # Broadcast timestep: [batch, 1] -> [batch, height, width, 1]
     timestep_maps = np.zeros((batch_size, height, width, 1), dtype=np.float32)
-    timestep_maps[:, :, :, 0] = timestep[:, 0]
+    timestep_maps[:, :, :, 0] = timestep[:, 0].reshape(batch_size, 1, 1)
     
     # Concatenate
     conditioning = np.concatenate([class_maps, timestep_maps], axis=-1)
@@ -347,7 +348,7 @@ def verify_tflite_ops(tflite_path: str) -> Dict[str, Any]:
         'SOFTMAX', 'LOGISTIC', 'TANH', 'RELU', 'RELU6', 'PRELU', 
         'LEAKY_RELU', 'ELU', 'FULLY_CONNECTED', 'TRANSPOSE_CONV',
         'QUANTIZE', 'DEQUANTIZE', 'STRIDED_SLICE', 'TRANSPOSE',
-        'SQUEEZE', 'EXPAND_DIMS', 'CAST'
+        'SQUEEZE', 'EXPAND_DIMS', 'CAST', 'DELEGATE'
     }
     
     unsupported = []

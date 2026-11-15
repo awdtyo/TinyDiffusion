@@ -98,11 +98,47 @@ class ConditionalDiffusionModel(Model):
         self.sqrt_one_minus_alphas_cumprod = tf.constant(
             self.schedule_arrays['sqrt_one_minus_alphas_cumprod'], dtype=tf.float32)
     
+    def get_config(self):
+        """Return config for serialization."""
+        config = super().get_config()
+        config.update({
+            'model_config': self.config,
+            'num_timesteps': self.noise_schedule.num_timesteps,
+            'schedule_type': self.noise_schedule.schedule_type,
+            'beta_start': self.noise_schedule.beta_start,
+            'beta_end': self.noise_schedule.beta_end,
+            'cosine_s': self.noise_schedule.cosine_s,
+            'normalize_timestep': self.noise_schedule.normalize_timestep,
+        })
+        return config
+    
+    @classmethod
+    def from_config(cls, config):
+        """Recreate model from config."""
+        # Extract model config and noise schedule params
+        model_config = config.pop('model_config', {})
+        noise_schedule_params = {
+            'num_timesteps': config.pop('num_timesteps', 100),
+            'schedule_type': config.pop('schedule_type', 'linear'),
+            'beta_start': config.pop('beta_start', 0.0001),
+            'beta_end': config.pop('beta_end', 0.02),
+            'cosine_s': config.pop('cosine_s', 0.008),
+            'normalize_timestep': config.pop('normalize_timestep', True),
+        }
+        
+        # Create noise schedule object
+        from src.diffusion import NoiseSchedule
+        noise_schedule = NoiseSchedule({
+            'diffusion': noise_schedule_params
+        })
+        
+        return cls(model_config, noise_schedule, **config)
+    
     def call(self, inputs, training=False):
         """Forward pass: predict noise from noisy image + conditioning."""
         return self.cnn(inputs, training=training)
     
-    def compute_loss(self, x_0, class_labels, timesteps, noise):
+    def compute_loss(self, x_0, class_labels, timesteps, noise, training=False):
         """
         Compute diffusion training loss.
         
@@ -111,6 +147,7 @@ class ConditionalDiffusionModel(Model):
             class_labels: Integer labels [batch]
             timesteps: Integer timesteps [batch]
             noise: Ground truth noise [batch, 28, 28, 1]
+            training: Whether in training mode
             
         Returns:
             MSE loss between predicted and actual noise
@@ -137,21 +174,11 @@ class ConditionalDiffusionModel(Model):
         t_normalized = tf.cast(timesteps, tf.float32) / self.noise_schedule.num_timesteps
         t_normalized = tf.reshape(t_normalized, [-1, 1])
         
-        # Broadcast to spatial maps
-        # Class maps: [batch, 10] -> [batch, 28, 28, 10]
-        class_maps = tf.zeros((batch_size, 28, 28, 10), dtype=tf.float32)
-        for c in range(10):
-            class_maps = tf.tensor_scatter_nd_update(
-                class_maps,
-                tf.where(tf.ones((batch_size, 28, 28, 1), dtype=tf.bool)),
-                tf.tile(class_onehot[:, c:c+1], [1, 28*28])
-            )
-        
-        # Simpler approach: use tf.repeat and tf.reshape
+        # Broadcast class maps: [batch, 10] -> [batch, 28, 28, 10]
         class_maps = tf.repeat(class_onehot[:, tf.newaxis, tf.newaxis, :], 28*28, axis=1)
         class_maps = tf.reshape(class_maps, (batch_size, 28, 28, 10))
         
-        # Timestep map: [batch, 1] -> [batch, 28, 28, 1]
+        # Broadcast timestep map: [batch, 1] -> [batch, 28, 28, 1]
         timestep_maps = tf.repeat(t_normalized[:, tf.newaxis, tf.newaxis, :], 28*28, axis=1)
         timestep_maps = tf.reshape(timestep_maps, (batch_size, 28, 28, 1))
         
@@ -182,10 +209,28 @@ class ConditionalDiffusionModel(Model):
         noise = tf.random.normal(tf.shape(x_0), dtype=tf.float32)
         
         with tf.GradientTape() as tape:
-            loss = self.compute_loss(x_0, class_labels, timesteps, noise)
+            loss = self.compute_loss(x_0, class_labels, timesteps, noise, training=True)
         
         gradients = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+        
+        return {'loss': loss}
+
+    def test_step(self, data):
+        """Custom validation step for diffusion."""
+        x_0, class_labels = data
+        
+        batch_size = tf.shape(x_0)[0]
+        
+        # Sample random timesteps for validation
+        timesteps = tf.random.uniform(
+            (batch_size,), 0, self.noise_schedule.num_timesteps, dtype=tf.int32)
+        
+        # Sample noise
+        noise = tf.random.normal(tf.shape(x_0), dtype=tf.float32)
+        
+        # Compute loss (no gradient tape needed)
+        loss = self.compute_loss(x_0, class_labels, timesteps, noise, training=False)
         
         return {'loss': loss}
 

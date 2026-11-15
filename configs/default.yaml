@@ -71,13 +71,13 @@ training:
   # Adam optimizer parameters
   adam_beta1: 0.9
   adam_beta2: 0.999
-  adam_epsilon: 1e-7
+  adam_epsilon: 1.0e-7
   # Learning rate scheduling
   lr_schedule:
     enabled: true
     type: "cosine_decay"
     warmup_epochs: 5
-    min_lr: 1e-5
+    min_lr: 1.0e-5
   # Early stopping
   early_stopping:
     enabled: true

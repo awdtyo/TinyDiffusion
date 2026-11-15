@@ -15,7 +15,7 @@ from src.utils import load_config, verify_tflite_ops, get_tflite_tensor_details
 
 def test_model_export_float32(tmp_path):
     """Test float32 TFLite export."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     model = build_inference_model(config)
     
     # Export to temp file
@@ -41,7 +41,7 @@ def test_model_export_float32(tmp_path):
 
 def test_model_ops_compatibility():
     """Test model uses TFLite Micro compatible ops."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     model = build_inference_model(config)
     
     # Convert to TFLite
@@ -64,7 +64,7 @@ def test_model_ops_compatibility():
 
 def test_input_output_quantization_params():
     """Test INT8 quantization parameters exist."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     model = build_inference_model(config)
     
     # This test requires a quantized model, skip if not available

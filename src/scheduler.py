@@ -218,10 +218,11 @@ class DDIMScheduler:
             height, width = 28, 28
             class_maps = np.zeros((batch_size, height, width, 10), dtype=np.float32)
             for c in range(10):
-                class_maps[:, :, :, c] = class_onehot[:, c:c+1]
+                # Broadcast (batch, 1) to (batch, height, width)
+                class_maps[:, :, :, c] = class_onehot[:, c:c+1].reshape(batch_size, 1, 1)
             
             timestep_maps = np.zeros((batch_size, height, width, 1), dtype=np.float32)
-            timestep_maps[:, :, :, 0] = t_normalized[:, 0]
+            timestep_maps[:, :, :, 0] = t_normalized[:, 0].reshape(batch_size, 1, 1)
             
             conditioning = np.concatenate([class_maps, timestep_maps], axis=-1)
             model_input = np.concatenate([x_t, conditioning], axis=-1)

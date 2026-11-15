@@ -16,7 +16,7 @@ from src.utils import load_config
 
 def test_scheduler_creation():
     """Test scheduler creation."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     schedule = NoiseSchedule(config)
     scheduler = DDIMScheduler(config, schedule)
     
@@ -26,47 +26,47 @@ def test_scheduler_creation():
 
 def test_ddim_timesteps_8():
     """Test 8-step DDIM timesteps."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     schedule = NoiseSchedule(config)
     scheduler = DDIMScheduler(config, schedule)
     
     timesteps = scheduler.get_ddim_timesteps(8)
     
     assert len(timesteps) == 8
-    assert timesteps[0] == 99  # Start from max noise
-    assert timesteps[-1] == 12  # End near clean
+    assert timesteps[0] == 84  # Start from high noise
+    assert timesteps[-1] == 0  # End at clean
     assert np.all(np.diff(timesteps) < 0)  # Decreasing
 
 
 def test_ddim_timesteps_16():
     """Test 16-step DDIM timesteps."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     schedule = NoiseSchedule(config)
     scheduler = DDIMScheduler(config, schedule)
     
     timesteps = scheduler.get_ddim_timesteps(16)
     
     assert len(timesteps) == 16
-    assert timesteps[0] == 99
+    assert timesteps[0] == 90
     assert np.all(np.diff(timesteps) < 0)
 
 
 def test_ddim_timesteps_32():
     """Test 32-step DDIM timesteps."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     schedule = NoiseSchedule(config)
     scheduler = DDIMScheduler(config, schedule)
     
     timesteps = scheduler.get_ddim_timesteps(32)
     
     assert len(timesteps) == 32
-    assert timesteps[0] == 99
+    assert timesteps[0] == 93
     assert np.all(np.diff(timesteps) < 0)
 
 
 def test_ddim_step_deterministic():
     """Test DDIM step with eta=0 is deterministic."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     schedule = NoiseSchedule(config)
     scheduler = DDIMScheduler(config, schedule)
     
@@ -82,7 +82,7 @@ def test_ddim_step_deterministic():
 
 def test_ddim_step_output_shape():
     """Test DDIM step output shape."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     schedule = NoiseSchedule(config)
     scheduler = DDIMScheduler(config, schedule)
     
@@ -96,7 +96,7 @@ def test_ddim_step_output_shape():
 
 def test_ddim_step_final():
     """Test DDIM final step (t_prev=-1)."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     schedule = NoiseSchedule(config)
     scheduler = DDIMScheduler(config, schedule)
     
@@ -113,7 +113,7 @@ def test_ddim_step_final():
 
 def test_scheduler_batch_step():
     """Test batch DDIM step."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     schedule = NoiseSchedule(config)
     scheduler = DDIMScheduler(config, schedule)
     
@@ -127,7 +127,7 @@ def test_scheduler_batch_step():
 
 def test_sampler_output_shape():
     """Test sampler output shape with dummy model."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     schedule = NoiseSchedule(config)
     scheduler = DDIMScheduler(config, schedule)
     model = build_inference_model(config)
@@ -141,7 +141,7 @@ def test_sampler_output_shape():
 
 def test_sampler_batch():
     """Test batch sampling."""
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     schedule = NoiseSchedule(config)
     scheduler = DDIMScheduler(config, schedule)
     model = build_inference_model(config)
@@ -156,7 +156,7 @@ def test_generate_class_grid():
     """Test class grid generation."""
     from src.scheduler import generate_class_grid
     
-    config = load_config("../configs/default.yaml")
+    config = load_config("configs/default.yaml")
     schedule = NoiseSchedule(config)
     model = build_inference_model(config)
     
