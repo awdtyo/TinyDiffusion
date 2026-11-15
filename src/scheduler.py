@@ -38,37 +38,41 @@ class DDIMScheduler:
         self.ddim_timesteps = {}
         
         for num_steps in self.supported_steps:
-            # Uniform spacing for DDIM
-            # We use timesteps from num_timesteps-1 down to 0
-            # For 8 steps from 100 timesteps: [99, 87, 74, 62, 49, 37, 24, 12, 0] 
-            # Actually DDIM uses a subset, let's use strided sampling
-            step_ratio = self.noise_schedule.num_timesteps // num_steps
-            timesteps = np.arange(0, self.noise_schedule.num_timesteps, step_ratio, dtype=np.int32)
+            # Endpoint-inclusive DDIM timestep selection:
+            # Select timesteps spanning from num_timesteps-1 down to 0,
+            # including both endpoints. This ensures the first DDIM step
+            # starts at the maximum training timestep where alpha_bar is
+            # closest to zero (for proper Gaussian initialization).
+            timesteps = np.linspace(
+                self.noise_schedule.num_timesteps - 1,
+                0,
+                num_steps,
+                dtype=np.int32
+            )
             
-            # Ensure we have exactly num_steps + 1 timesteps (including t=0 for final step)
-            # For DDIM, we need timesteps for each denoising step
-            # The sequence goes from T-1 down to 0
-            if len(timesteps) > num_steps:
-                timesteps = timesteps[:num_steps]
-            elif len(timesteps) < num_steps:
-                # Pad with additional timesteps if needed
-                additional = np.linspace(timesteps[-1] + 1, self.noise_schedule.num_timesteps - 1, 
-                                       num_steps - len(timesteps), dtype=np.int32)
-                timesteps = np.concatenate([timesteps, additional])
+            # Verify the sequence
+            assert len(timesteps) == num_steps, f"Expected {num_steps} timesteps, got {len(timesteps)}"
+            assert timesteps[0] == self.noise_schedule.num_timesteps - 1, f"First timestep must be {self.noise_schedule.num_timesteps - 1}, got {timesteps[0]}"
+            assert timesteps[-1] == 0, f"Last timestep must be 0, got {timesteps[-1]}"
+            assert np.all(np.diff(timesteps) < 0), "Timestep sequence must be strictly decreasing"
             
-            # Reverse for denoising (high to low noise)
-            timesteps = timesteps[::-1]
             self.ddim_timesteps[num_steps] = timesteps
     
     def get_ddim_timesteps(self, num_steps: int) -> np.ndarray:
         """Get DDIM timestep sequence for given number of steps."""
         if num_steps not in self.ddim_timesteps:
-            # Generate on the fly
-            step_ratio = self.noise_schedule.num_timesteps // num_steps
-            timesteps = np.arange(0, self.noise_schedule.num_timesteps, step_ratio, dtype=np.int32)
-            if len(timesteps) > num_steps:
-                timesteps = timesteps[:num_steps]
-            timesteps = timesteps[::-1]
+            # Generate on the fly using endpoint-inclusive approach
+            timesteps = np.linspace(
+                self.noise_schedule.num_timesteps - 1,
+                0,
+                num_steps,
+                dtype=np.int32
+            )
+            # Verify
+            assert len(timesteps) == num_steps
+            assert timesteps[0] == self.noise_schedule.num_timesteps - 1
+            assert timesteps[-1] == 0
+            assert np.all(np.diff(timesteps) < 0)
             return timesteps
         return self.ddim_timesteps[num_steps]
     

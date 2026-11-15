@@ -61,6 +61,7 @@ pio device monitor --filter time
 | `R` | Generate random digit |
 | `STEPS <8\|16\|32>` | Set DDIM sampling steps |
 | `ETA <0.0-1.0>` | Set DDIM eta (0=deterministic) |
+| `SEED <n>` | Deterministic noise seed for Python replay (`0` = hardware RNG) |
 | `INFO` | Show model and memory info |
 | `HELP` | Show command list |
 
@@ -88,17 +89,35 @@ OK: Generated digit 3 in 467 ms (16 steps)
 
 > INFO
 === TinyDiffusion-ESP32 Info ===
-Model size: 12456 bytes
+Model size: 8536 bytes
 Tensor arena: 70000 bytes
-Arena used: 52340 bytes
-Free heap: 384212 bytes
-Largest free block: 312456 bytes
-Sampling steps: 16
+Arena used: 23356 bytes
+Free heap: 231572 bytes
+Largest free block: 110580 bytes
+Sampling steps: 8
 DDIM eta: 0.00
-Input quant: scale=0.007843, zp=-128
-Output quant: scale=0.015625, zp=0
+Input quant: scale=0.028883, zp=3
+Output quant: scale=0.043014, zp=-21
+Noise RNG: hardware seed=1
 ================================
+
+> SEED 12345
+OK: deterministic noise seed=12345
+
+> G 0
+... per-step diagnostics ...
+OK: Generated digit 0 in 6374 ms (8 steps)
 ```
+
+`SEED` exists so a generation can be reproduced exactly in Python:
+
+```
+PYTHONPATH=. python scripts/replay_reference.py --seed 12345 --class 0 \
+    --log /tmp/opencode/serial_seed.log
+```
+
+Set `PRINT_STEP_STATS` and `PRINT_FINAL_NUMERIC_GRID` to `0` in
+`esp32/src/main.cpp` to remove the temporary diagnostics.
 
 ## Memory Usage
 

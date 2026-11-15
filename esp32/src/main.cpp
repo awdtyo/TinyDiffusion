@@ -48,36 +48,65 @@ static float current_eta = DDIM_ETA;
 // Temporary per-step sampling diagnostics. Set to 0 once the numerical path
 // has been validated on hardware.
 #define PRINT_STEP_STATS 1
+// Print the final image as a 28x28 numeric grid (diagnostic only).
+#define PRINT_FINAL_NUMERIC_GRID 1
+
+// ==================== Deterministic noise (replay support) ====================
+// `SEED <n>` with n != 0 replaces esp_random() with a xorshift32 stream so the
+// same x_T can be reproduced exactly in the Python reference.  `SEED 0`
+// restores the hardware RNG.  The algorithm below is mirrored by
+// scripts/replay_reference.py.
+static bool g_noise_deterministic = false;
+static uint32_t g_noise_seed = 1;
+static uint32_t g_noise_state = 1;
+static bool g_has_spare = false;
+static float g_spare = 0.0f;
+
+static inline uint32_t xorshift32(uint32_t* state) {
+  uint32_t s = *state;
+  s ^= s << 13;
+  s ^= s >> 17;
+  s ^= s << 5;
+  *state = s;
+  return s;
+}
 
 // ==================== Helper Functions ====================
 
 /**
- * Generate random Gaussian noise using hardware RNG
- * Box-Muller transform
+ * Generate random Gaussian noise (Box-Muller transform).
+ * Uses xorshift32 when a replay seed is active, otherwise the hardware RNG.
  */
 float generate_gaussian_noise() {
-  static bool has_spare = false;
-  static float spare;
-  
-  if (has_spare) {
-    has_spare = false;
-    return spare;
+  if (g_has_spare) {
+    g_has_spare = false;
+    return g_spare;
   }
-  
-  #if USE_HW_RNG
-    uint32_t u1 = esp_random();
-    uint32_t u2 = esp_random();
-    float f1 = (u1 & 0xFFFFFF) / 16777216.0f;
-    float f2 = (u2 & 0xFFFFFF) / 16777216.0f;
-    if (f1 == 0.0f) f1 = 1e-6f;
-    float z0 = sqrtf(-2.0f * logf(f1)) * cosf(2.0f * M_PI * f2);
-    spare = sqrtf(-2.0f * logf(f1)) * sinf(2.0f * M_PI * f2);
-    has_spare = true;
-    return z0;
-  #else
-    // Deterministic fallback - not truly random
-    return 0.0f;
-  #endif
+
+  uint32_t u1;
+  uint32_t u2;
+  if (g_noise_deterministic) {
+    u1 = xorshift32(&g_noise_state);
+    u2 = xorshift32(&g_noise_state);
+  } else {
+#if USE_HW_RNG
+    u1 = esp_random();
+    u2 = esp_random();
+#else
+    u1 = 0;
+    u2 = 0;
+#endif
+  }
+
+  float f1 = (u1 & 0xFFFFFF) / 16777216.0f;
+  float f2 = (u2 & 0xFFFFFF) / 16777216.0f;
+  if (f1 == 0.0f) f1 = 1e-6f;
+
+  const float radius = sqrtf(-2.0f * logf(f1));
+  const float z0 = radius * cosf(2.0f * M_PI * f2);
+  g_spare = radius * sinf(2.0f * M_PI * f2);
+  g_has_spare = true;
+  return z0;
 }
 
 /**
@@ -85,6 +114,15 @@ float generate_gaussian_noise() {
  */
 void init_noise_image(float* x_t) {
   const int size = MODEL_OUTPUT_HEIGHT * MODEL_OUTPUT_WIDTH * MODEL_OUTPUT_CHANNELS;
+  if (g_noise_deterministic) {
+    g_noise_state = g_noise_seed;
+    g_has_spare = false;
+    Serial.printf("Noise RNG: deterministic, seed=%lu, xorshift32+BoxMuller\n",
+                  (unsigned long)g_noise_seed);
+  } else {
+    g_has_spare = false;
+    Serial.println("Noise RNG: hardware esp_random(), BoxMuller");
+  }
   for (int i = 0; i < size; i++) {
     x_t[i] = generate_gaussian_noise();
   }
@@ -176,6 +214,85 @@ void prepare_model_input(const float* x_t, int class_label, int timestep, int8_t
 }
 
 /**
+ * Print the runtime quantization parameters and compare them with the values
+ * compiled into model_data.cpp.  The firmware always runs with the tensor
+ * metadata; the header constants exist only as a cross-check.
+ */
+static void print_quantization_metadata() {
+  Serial.printf("  runtime tensors: input scale=%.9f zp=%ld | output scale=%.9f zp=%ld\n",
+                model_runner.get_input_scale(),
+                (long)model_runner.get_input_zero_point(),
+                model_runner.get_output_scale(),
+                (long)model_runner.get_output_zero_point());
+  Serial.printf("  embedded header: input scale=%.9f zp=%ld | output scale=%.9f zp=%ld\n",
+                g_model_input_scale, (long)g_model_input_zero_point,
+                g_model_output_scale, (long)g_model_output_zero_point);
+}
+
+/**
+ * Dump all 12 input channels for representative pixels: the float value that
+ * the training pipeline would use, the unclipped rounding result, the clipped
+ * INT8 code, and the value actually written to the tensor buffer.
+ */
+static void print_input_quantization(const float* x_t, int class_label, int timestep) {
+  const float scale = model_runner.get_input_scale();
+  const int32_t zp = model_runner.get_input_zero_point();
+  const float t_norm = (float)timestep / (float)NUM_TRAINING_TIMESTEPS;
+
+  Serial.printf("  input tensor NHWC [1,%d,%d,%d], pixel stride=%d\n",
+                MODEL_INPUT_HEIGHT, MODEL_INPUT_WIDTH, MODEL_INPUT_CHANNELS,
+                MODEL_INPUT_CHANNELS);
+  Serial.printf("  formula: q = round(v / %.9f) + (%ld), clipped to [-128,127]\n",
+                scale, (long)zp);
+  Serial.printf("  timestep %d -> v = %d / %d = %.6f\n",
+                timestep, timestep, NUM_TRAINING_TIMESTEPS, t_norm);
+
+  const int probes[2] = {0,
+                         (MODEL_INPUT_HEIGHT / 2) * MODEL_INPUT_WIDTH +
+                             MODEL_INPUT_WIDTH / 2};
+  for (int p = 0; p < 2; p++) {
+    const int idx = probes[p];
+    const int y = idx / MODEL_INPUT_WIDTH;
+    const int x = idx % MODEL_INPUT_WIDTH;
+    Serial.printf("  pixel(y=%d,x=%d) buffer offset %d:\n", y, x,
+                  idx * MODEL_INPUT_CHANNELS);
+    for (int c = 0; c < MODEL_INPUT_CHANNELS; c++) {
+      float v;
+      if (c == 0) {
+        v = x_t[idx];
+      } else if (c == 11) {
+        v = t_norm;
+      } else {
+        v = ((c - 1) == class_label) ? 1.0f : 0.0f;
+      }
+
+      const long raw = lroundf(v / scale + (float)zp);
+      int q = (int)raw;
+      if (q < -128) q = -128;
+      if (q > 127) q = 127;
+      const int stored = model_input_int8[idx * MODEL_INPUT_CHANNELS + c];
+      Serial.printf("    ch%02d v=%+.6f raw=%+ld q=%+4d stored=%+4d %s\n",
+                    c, v, raw, q, stored, (q == stored) ? "OK" : "MISMATCH");
+    }
+  }
+
+  // Image channel range and its dequantized reconstruction.
+  const int num_pixels = MODEL_INPUT_HEIGHT * MODEL_INPUT_WIDTH;
+  int imin = 0;
+  int imax = 0;
+  for (int i = 1; i < num_pixels; i++) {
+    if (x_t[i] < x_t[imin]) imin = i;
+    if (x_t[i] > x_t[imax]) imax = i;
+  }
+  const int qmin = model_input_int8[imin * MODEL_INPUT_CHANNELS];
+  const int qmax = model_input_int8[imax * MODEL_INPUT_CHANNELS];
+  Serial.printf("  image min v=%+.4f (pixel %d) q=%+d dequant=%+.4f\n",
+                x_t[imin], imin, qmin, (qmin - zp) * scale);
+  Serial.printf("  image max v=%+.4f (pixel %d) q=%+d dequant=%+.4f\n",
+                x_t[imax], imax, qmax, (qmax - zp) * scale);
+}
+
+/**
  * Dequantize model output to float
  */
 void dequantize_output(const int8_t* output_int8, float* output_float) {
@@ -252,6 +369,7 @@ uint32_t generate_digit_local(int class_label, int num_steps, float eta, float* 
   }
   Serial.println();
   print_tensor_stats("x_T", x_t_float, image_size);
+  print_quantization_metadata();
 #endif
   
   // Denoising loop
@@ -268,6 +386,12 @@ uint32_t generate_digit_local(int class_label, int num_steps, float eta, float* 
     
 #if PRINT_STEP_STATS
     Serial.printf("Step %d/%d: t=%d t_prev=%d\n", step + 1, n_steps, t, t_prev);
+    Serial.printf("  input q: image=%d class_ch0=%d class_ch1=%d timestep=%d (target=%d)\n",
+                  model_input_int8[0], model_input_int8[1],
+                  model_input_int8[2], model_input_int8[11], class_label);
+    if (step == 0) {
+      print_input_quantization(x_t_float, class_label, t);
+    }
     print_tensor_stats("x_t", x_t_float, image_size);
 #endif
     
@@ -306,6 +430,36 @@ uint32_t generate_digit_local(int class_label, int num_steps, float eta, float* 
   print_tensor_stats("FINAL", x_t_float, image_size);
   Serial.printf("FINAL pixels >= 0.5: %d / %d (output_buffer=%p)\n",
                 above_threshold, image_size, (void*)output_buffer);
+
+  // ASCII rendering of exactly what oled_draw_digit() thresholds: a '#'
+  // means the OLED pixel is lit, '+' is a negative value, ' ' a clear pixel.
+  Serial.println("FINAL bitmap as OLED renders it ('#'=lit, '+'<0, ' '>=0):");
+  for (int y = 0; y < MODEL_OUTPUT_HEIGHT; y++) {
+    char row[MODEL_OUTPUT_WIDTH + 1];
+    for (int x = 0; x < MODEL_OUTPUT_WIDTH; x++) {
+      const float v = x_t_float[y * MODEL_OUTPUT_WIDTH + x];
+      row[x] = (v >= 0.5f) ? '#' : ((v < 0.0f) ? '+' : ' ');
+    }
+    row[MODEL_OUTPUT_WIDTH] = '\0';
+    Serial.println(row);
+  }
+
+#if PRINT_FINAL_NUMERIC_GRID
+  // Exact float values handed to the OLED, so the bitmap can be verified
+  // against the numbers instead of a photograph.  One write per row keeps the
+  // UART stream compact.
+  Serial.println("FINAL numeric grid (row-major, 2 decimals):");
+  for (int y = 0; y < MODEL_OUTPUT_HEIGHT; y++) {
+    char line[MODEL_OUTPUT_WIDTH * 7 + 1];
+    int used = 0;
+    for (int x = 0; x < MODEL_OUTPUT_WIDTH; x++) {
+      used += snprintf(line + used, sizeof(line) - used, "%+6.2f",
+                       x_t_float[y * MODEL_OUTPUT_WIDTH + x]);
+    }
+    line[used] = '\0';
+    Serial.println(line);
+  }
+#endif
 #endif
   
   uint32_t end_time = millis();
@@ -365,7 +519,22 @@ void process_serial_command(String cmd) {
     Serial.printf("DDIM eta: %.2f\n", current_eta);
     Serial.printf("Input quant: scale=%.6f, zp=%ld\n", model_runner.get_input_scale(), model_runner.get_input_zero_point());
     Serial.printf("Output quant: scale=%.6f, zp=%ld\n", model_runner.get_output_scale(), model_runner.get_output_zero_point());
+    Serial.printf("Noise RNG: %s seed=%lu\n",
+                  g_noise_deterministic ? "deterministic" : "hardware",
+                  (unsigned long)g_noise_seed);
     Serial.println("================================");
+  }
+  else if (cmd.startsWith("SEED ")) {
+    // Deterministic noise for Python <-> firmware replay.
+    const long seed = cmd.substring(5).toInt();
+    if (seed > 0) {
+      g_noise_seed = (uint32_t)seed;
+      g_noise_deterministic = true;
+      Serial.printf("OK: deterministic noise seed=%lu\n", (unsigned long)g_noise_seed);
+    } else {
+      g_noise_deterministic = false;
+      Serial.println("OK: noise RNG restored to esp_random()");
+    }
   }
   else if (cmd.startsWith("STEPS ")) {
     // Set sampling steps
@@ -393,6 +562,7 @@ void process_serial_command(String cmd) {
     Serial.println("R          - Generate random digit");
     Serial.println("STEPS <8|16|32> - Set DDIM sampling steps");
     Serial.println("ETA <0-1>  - Set DDIM eta (0=deterministic)");
+    Serial.println("SEED <n>   - Deterministic noise seed for replay (0 = hardware RNG)");
     Serial.println("INFO       - Show model and memory info");
     Serial.println("HELP       - Show this help");
     Serial.println("=====================================");

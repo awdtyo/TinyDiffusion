@@ -37,9 +37,14 @@ class DiffusionTrainer:
         self.learning_rate = self.train_config.get('learning_rate', 0.001)
         self.validation_split = self.train_config.get('validation_split', 0.1)
         
-        # Paths
-        self.checkpoint_dir = 'artifacts/checkpoints'
-        self.log_dir = self.train_config.get('tensorboard', {}).get('log_dir', 'artifacts/logs')
+        # Paths - use config to determine checkpoint directory
+        checkpoint_base = self.train_config.get('checkpoint_dir', 'artifacts/checkpoints')
+        log_base = self.train_config.get('tensorboard', {}).get('log_dir', 'artifacts/logs')
+        
+        # Append timestep suffix to isolate experiments
+        num_timesteps = self.config.get('diffusion', {}).get('num_timesteps', 100)
+        self.checkpoint_dir = f'{checkpoint_base}_{num_timesteps}'
+        self.log_dir = f'{log_base}_{num_timesteps}'
         ensure_dir(self.checkpoint_dir)
         ensure_dir(self.log_dir)
     

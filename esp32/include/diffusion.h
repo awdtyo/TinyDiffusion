@@ -42,10 +42,12 @@ static constexpr int kDDIMTimesteps32[32] = {93, 90, 87, 84, 81, 78, 75, 72,
 
 // Alphas cumprod for all 100 timesteps (linear schedule)
 // Computed from: betas = linspace(0.0001, 0.02, 100); alphas = 1 - betas; cumprod(alphas)
-// These values MUST match the Python training exactly
-extern const float g_alphas_cumprod[NUM_TRAINING_TIMESTEPS];
-extern const float g_sqrt_alphas_cumprod[NUM_TRAINING_TIMESTEPS];
-extern const float g_sqrt_one_minus_alphas_cumprod[NUM_TRAINING_TIMESTEPS];
+// These values MUST match the Python training exactly.  The definitions in
+// diffusion.cpp deliberately omit the bound so static_assert can reject a
+// truncated initializer list instead of silently zero-filling it.
+extern const float g_alphas_cumprod[];
+extern const float g_sqrt_alphas_cumprod[];
+extern const float g_sqrt_one_minus_alphas_cumprod[];
 
 // ==================== DDIM Sampling Functions ====================
 
