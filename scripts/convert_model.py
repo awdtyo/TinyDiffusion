@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--float-output', type=str, default='artifacts/model_float32.tflite', help='Float32 TFLite output')
     parser.add_argument('--int8-output', type=str, default='artifacts/model_int8.tflite', help='INT8 TFLite output')
     parser.add_argument('--header-output', type=str, default='esp32/include/model_data.h', help='C header output')
+    parser.add_argument('--source-output', type=str, default='esp32/src/model_data.cpp', help='C++ model source output')
     args = parser.parse_args()
     
     config = load_config(args.config)
@@ -26,6 +27,7 @@ def main():
     config['export']['float_tflite_path'] = args.float_output
     config['export']['int8_tflite_path'] = args.int8_output
     config['export']['model_header_path'] = args.header_output
+    config['export']['model_source_path'] = args.source_output
     
     print("=" * 60)
     print("TinyDiffusion-ESP32 Model Conversion")
@@ -34,6 +36,7 @@ def main():
     print(f"Float32 output: {args.float_output}")
     print(f"INT8 output: {args.int8_output}")
     print(f"Header output: {args.header_output}")
+    print(f"Source output: {args.source_output}")
     print("=" * 60)
     
     # Run export pipeline

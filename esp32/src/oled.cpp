@@ -163,12 +163,14 @@ void oled_draw_digit(const float* image, int class_label,
   // Draw generation info
   u8g2.setFont(u8g2_font_5x7_tf);
   char info_str[64];
-  snprintf(info_str, sizeof(info_str), "Time: %lu ms | Steps: %d", generation_time_ms, sampling_steps);
+  snprintf(info_str, sizeof(info_str), "Time: %lu ms | Steps: %d",
+           (unsigned long)generation_time_ms, sampling_steps);
   u8g2.drawStr(2, dst_y + dst_h + 28, info_str);
   
   // Draw memory info
   char mem_str[64];
-  snprintf(mem_str, sizeof(mem_str), "Free Heap: %d KB", ESP.getFreeHeap() / 1024);
+  snprintf(mem_str, sizeof(mem_str), "Free Heap: %lu KB",
+           (unsigned long)(ESP.getFreeHeap() / 1024));
   u8g2.drawStr(2, dst_y + dst_h + 38, mem_str);
   
   u8g2.sendBuffer();

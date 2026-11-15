@@ -141,6 +141,8 @@ export:
   int8_tflite_path: "artifacts/model_int8.tflite"
   # C header for ESP32
   model_header_path: "esp32/include/model_data.h"
+  # C++ source containing the embedded model bytes
+  model_source_path: "esp32/src/model_data.cpp"
   # Conversion report
   conversion_report_path: "artifacts/conversion_report.json"
 

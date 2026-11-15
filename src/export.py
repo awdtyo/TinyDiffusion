@@ -9,7 +9,7 @@ import tensorflow as tf
 from typing import Dict, Any, Optional, List, Generator
 from src.utils import (load_config, ensure_dir, save_json, get_tflite_tensor_details,
                        run_tflite_inference, compare_outputs, create_model_header,
-                       verify_tflite_ops, print_model_summary)
+                       create_model_source, verify_tflite_ops, print_model_summary)
 from src.dataset import MNISTDataset
 from src.diffusion import NoiseSchedule
 from src.model import build_inference_model
@@ -18,8 +18,9 @@ from src.model import build_inference_model
 def export_saved_model(model: tf.keras.Model, export_dir: str) -> None:
     """Export Keras model to SavedModel format."""
     ensure_dir(export_dir)
-    model.save(export_dir, save_format='tf')
-    print(f"SavedModel exported to {export_dir}")
+    # Keras 3: use .keras extension for native format
+    model.save(export_dir + '.keras')
+    print(f"Model exported to {export_dir}.keras")
 
 
 def export_tflite_float32(model: tf.keras.Model, output_path: str) -> None:
@@ -40,8 +41,8 @@ def export_tflite_float32(model: tf.keras.Model, output_path: str) -> None:
 
 def create_representative_dataset(config: Dict[str, Any], 
                                   noise_schedule: NoiseSchedule,
-                                  num_samples: int = 500) -> Generator[List[np.ndarray], None, None]:
-    """Create representative dataset for INT8 quantization calibration."""
+                                  num_samples: int = 500):
+    """Create representative dataset callable for INT8 quantization calibration."""
     dataset = MNISTDataset(config)
     dataset.load()
     
@@ -54,39 +55,42 @@ def create_representative_dataset(config: Dict[str, Any],
     x_calib = x_train[indices]
     y_calib = y_train[indices]
     
-    # Generate model inputs for calibration
-    for i in range(len(x_calib)):
-        # Random timestep
-        t = np.random.randint(0, noise_schedule.num_timesteps)
-        
-        # Prepare single sample input
-        img = x_calib[i:i+1]  # [1, 28, 28, 1]
-        label = y_calib[i:i+1]  # [1]
-        
-        # Add noise
-        noise = np.random.randn(*img.shape).astype(np.float32)
-        
-        # Forward diffusion
-        from src.diffusion import forward_diffusion
-        x_t = forward_diffusion(img, np.array([t]), noise, noise_schedule.num_timesteps,
-                               noise_schedule.schedule_type, noise_schedule.beta_start, noise_schedule.beta_end)
-        
-        # Prepare conditioning
-        from src.utils import prepare_model_input
-        model_input = prepare_model_input(
-            x_t, label, np.array([t]),
-            num_classes=10,
-            normalize_timestep=noise_schedule.normalize_timestep,
-            num_timesteps=noise_schedule.num_timesteps
-        )
-        
-        yield [model_input.astype(np.float32)]
+    def gen():
+        # Generate model inputs for calibration
+        for i in range(len(x_calib)):
+            # Random timestep
+            t = np.random.randint(0, noise_schedule.num_timesteps)
+            
+            # Prepare single sample input
+            img = x_calib[i:i+1]  # [1, 28, 28, 1]
+            label = y_calib[i:i+1]  # [1]
+            
+            # Add noise
+            noise = np.random.randn(*img.shape).astype(np.float32)
+            
+            # Forward diffusion
+            from src.diffusion import forward_diffusion
+            x_t = forward_diffusion(img, np.array([t]), noise, noise_schedule.num_timesteps,
+                                   noise_schedule.schedule_type, noise_schedule.beta_start, noise_schedule.beta_end)
+            
+            # Prepare conditioning
+            from src.utils import prepare_model_input
+            model_input = prepare_model_input(
+                x_t, label, np.array([t]),
+                num_classes=10,
+                normalize_timestep=noise_schedule.normalize_timestep,
+                num_timesteps=noise_schedule.num_timesteps
+            )
+            
+            yield [model_input.astype(np.float32)]
+    
+    return gen
 
 
 def export_tflite_int8(model: tf.keras.Model, config: Dict[str, Any],
                        noise_schedule: NoiseSchedule,
                        output_path: str,
-                       representative_data: Generator = None) -> Dict[str, Any]:
+                       representative_data=None) -> Dict[str, Any]:
     """Export model to fully quantized INT8 TensorFlow Lite."""
     ensure_dir(os.path.dirname(output_path))
     
@@ -96,7 +100,7 @@ def export_tflite_int8(model: tf.keras.Model, config: Dict[str, Any],
     inference_input_type = quant_config.get('inference_input_type', 'int8')
     inference_output_type = quant_config.get('inference_output_type', 'int8')
     
-    # Create representative dataset if not provided
+    # Create representative dataset callable if not provided
     if representative_data is None:
         representative_data = create_representative_dataset(config, noise_schedule, representative_samples)
     
@@ -104,6 +108,7 @@ def export_tflite_int8(model: tf.keras.Model, config: Dict[str, Any],
     
     # Enable full INT8 quantization
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    # representative_dataset must be a callable
     converter.representative_dataset = representative_data
     
     # Force INT8 for inputs and outputs
@@ -263,6 +268,7 @@ def run_full_export_pipeline(config_path: str = "configs/default.yaml",
     float_tflite_path = export_config.get('float_tflite_path', 'artifacts/model_float32.tflite')
     int8_tflite_path = export_config.get('int8_tflite_path', 'artifacts/model_int8.tflite')
     model_header_path = export_config.get('model_header_path', 'esp32/include/model_data.h')
+    model_source_path = export_config.get('model_source_path', 'esp32/src/model_data.cpp')
     conversion_report_path = export_config.get('conversion_report_path', 'artifacts/conversion_report.json')
     
     ensure_dir('artifacts')
@@ -293,10 +299,13 @@ def run_full_export_pipeline(config_path: str = "configs/default.yaml",
     verification = verify_quantized_model(float_tflite_path, int8_tflite_path, config, noise_schedule)
     report['verification'] = verification
     
-    # 5. Generate C header
-    print("Generating C header...")
+    # 5. Generate C header and embedded model source
+    print("Generating C header and source...")
     create_model_header(int8_tflite_path, model_header_path)
+    create_model_source(int8_tflite_path, model_source_path,
+                        header_name=os.path.basename(model_header_path))
     report['model_header'] = model_header_path
+    report['model_source'] = model_source_path
     
     # Save conversion report
     save_json(report, conversion_report_path)

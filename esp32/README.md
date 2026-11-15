@@ -124,11 +124,17 @@ Actual times may vary based on CPU frequency and thermal throttling.
 
 ## Model Integration
 
-The model is embedded as a C array in `include/model_data.h`. To update:
+The model bytes are embedded as a 16-byte-aligned C array in
+`src/model_data.cpp`; `include/model_data.h` contains only the declarations
+and quantization metadata. To update:
 
 1. Train and quantize model (see main project README)
 2. Run conversion: `python ../scripts/generate_model_header.py`
 3. Rebuild firmware: `pio run`
+
+The generated source derives `g_model_len` from `sizeof(g_model)` and includes
+a compile-time size check, so a truncated model array fails the build instead
+of crashing at runtime.
 
 ## Quantization Parameters
 

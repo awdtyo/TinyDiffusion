@@ -8,6 +8,7 @@
 #include "config.h"
 #include <cmath>
 #include <cstring>
+#include "esp_random.h"
 
 // ==================== Pre-computed Schedule Data ====================
 // Linear schedule: beta_start=0.0001, beta_end=0.02, num_timesteps=100
@@ -28,7 +29,7 @@ const float g_alphas_cumprod[NUM_TRAINING_TIMESTEPS] = {
   0.9335021f, 0.9298085f, 0.926015f, 0.9221218f, 0.9181288f,
   0.9140361f, 0.9098435f, 0.9055512f, 0.9011591f, 0.8966672f,
   0.8920756f, 0.8873842f, 0.8825931f, 0.8777022f, 0.8727115f,
-  0.8676211f, 0.8624309f, 0.857141ff, 0.8517513f, 0.8462619f,
+  0.8676211f, 0.8624309f, 0.857141f, 0.8517513f, 0.8462619f,
   0.8406727f, 0.8349838f, 0.8291951f, 0.8233067f, 0.8173185f,
   0.8112306f, 0.805043f, 0.7987556f, 0.7923685f, 0.7858816f,
   0.779295f, 0.7726086f, 0.7658225f, 0.7589367f, 0.7519511f,
@@ -129,13 +130,23 @@ void ddim_step(const float* x_t, const float* noise_pred,
       float noise = 0.0f;
       #if USE_HW_RNG
         // Generate Gaussian noise using Box-Muller transform
-        static uint32_t rng_state = 0;
-        uint32_t u1 = esp_random();
-        uint32_t u2 = esp_random();
-        float f1 = (u1 & 0xFFFFFF) / 16777216.0f;
-        float f2 = (u2 & 0xFFFFFF) / 16777216.0f;
-        if (f1 == 0.0f) f1 = 1e-6f;
-        noise = sqrtf(-2.0f * logf(f1)) * cosf(2.0f * M_PI * f2);
+        // static variable for Box-Muller spare value
+        static bool has_spare = false;
+        static float spare;
+        
+        if (has_spare) {
+          has_spare = false;
+          noise = spare;
+        } else {
+          uint32_t u1 = esp_random();
+          uint32_t u2 = esp_random();
+          float f1 = (u1 & 0xFFFFFF) / 16777216.0f;
+          float f2 = (u2 & 0xFFFFFF) / 16777216.0f;
+          if (f1 == 0.0f) f1 = 1e-6f;
+          noise = sqrtf(-2.0f * logf(f1)) * cosf(2.0f * M_PI * f2);
+          spare = sqrtf(-2.0f * logf(f1)) * sinf(2.0f * M_PI * f2);
+          has_spare = true;
+        }
       #else
         // Deterministic fallback
         noise = 0.0f;
@@ -168,5 +179,3 @@ int get_ddim_timesteps(int num_steps, int* timesteps) {
       return 8;
   }
 }
-
-#endif // DIFFUSION_CPP

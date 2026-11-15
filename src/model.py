@@ -214,8 +214,14 @@ class ConditionalDiffusionModel(Model):
         gradients = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         
-        return {'loss': loss}
-
+        # Update metrics (including loss tracking)
+        for metric in self.metrics:
+            if hasattr(metric, 'update_state') and metric.__class__.__name__ != 'CompileMetrics':
+                metric.update_state(loss)
+        
+        # Return metrics results
+        return {m.name: m.result() for m in self.metrics if m.__class__.__name__ != 'CompileMetrics'}
+    
     def test_step(self, data):
         """Custom validation step for diffusion."""
         x_0, class_labels = data
@@ -232,7 +238,12 @@ class ConditionalDiffusionModel(Model):
         # Compute loss (no gradient tape needed)
         loss = self.compute_loss(x_0, class_labels, timesteps, noise, training=False)
         
-        return {'loss': loss}
+        # Update metrics
+        for metric in self.metrics:
+            if hasattr(metric, 'update_state') and metric.__class__.__name__ != 'CompileMetrics':
+                metric.update_state(loss)
+        
+        return {m.name: m.result() for m in self.metrics if m.__class__.__name__ != 'CompileMetrics'}
 
 
 def create_model(config: Dict[str, Any], noise_schedule) -> ConditionalDiffusionModel:
@@ -271,42 +282,3 @@ def get_model_config_summary(config: Dict[str, Any]) -> Dict[str, Any]:
         'estimated_params': total_params,
         'architecture': 'Conditional CNN'
     }
-
-
-if __name__ == "__main__":
-    # Test model building
-    config = {
-        'model': {
-            'input_height': 28,
-            'input_width': 28,
-            'input_channels': 1,
-            'num_classes': 10,
-            'conditioning_channels': 11,
-            'total_input_channels': 12,
-            'conv_layers': [
-                {'filters': 8, 'kernel_size': 3, 'activation': 'relu'},
-                {'filters': 8, 'kernel_size': 3, 'activation': 'relu'},
-                {'filters': 12, 'kernel_size': 3, 'activation': 'relu'},
-                {'filters': 8, 'kernel_size': 3, 'activation': 'relu'},
-                {'filters': 1, 'kernel_size': 3, 'activation': 'linear'}
-            ],
-            'use_bias': True,
-            'padding': 'same'
-        }
-    }
-    
-    # Build inference model
-    model = build_inference_model(config)
-    print_model_summary(model)
-    
-    # Test forward pass
-    test_input = tf.random.normal((1, 28, 28, 12))
-    output = model(test_input)
-    print(f"Output shape: {output.shape}")
-    
-    # Count parameters
-    param_count = count_parameters(model)
-    print(f"Total parameters: {param_count}")
-    
-    # Expected: ~3,277
-    print("Model module test passed!")

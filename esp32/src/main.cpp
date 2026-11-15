@@ -17,7 +17,10 @@
  */
 
 #include <Arduino.h>
+#include <cstring>
+#include <esp_random.h>
 #include "config.h"
+#include "model_data.h"
 #include "model_runner.h"
 #include "diffusion.h"
 #include "oled.h"
@@ -102,7 +105,7 @@ void prepare_model_input(const float* x_t, int class_label, int timestep, int8_t
   for (int i = 0; i < num_pixels; i++) {
     float val = x_t[i];
     // Quantize: [-1, 1] -> INT8
-    int8_t q = (int8_t)roundf(val / model_runner.input_scale_ + model_runner.input_zero_point_);
+    int8_t q = (int8_t)roundf(val / model_runner.get_input_scale() + model_runner.get_input_zero_point());
     model_input[i * MODEL_INPUT_CHANNELS + 0] = q;
   }
   
@@ -116,7 +119,7 @@ void prepare_model_input(const float* x_t, int class_label, int timestep, int8_t
   
   // 3. Timestep map (normalized to [0, 1])
   float t_norm = (float)timestep / NUM_TRAINING_TIMESTEPS;
-  int8_t t_q = (int8_t)roundf((t_norm * 2.0f - 1.0f) / model_runner.input_scale_ + model_runner.input_zero_point_);
+  int8_t t_q = (int8_t)roundf((t_norm * 2.0f - 1.0f) / model_runner.get_input_scale() + model_runner.get_input_zero_point());
   for (int i = 0; i < num_pixels; i++) {
     model_input[i * MODEL_INPUT_CHANNELS + 11] = t_q;
   }
@@ -128,12 +131,47 @@ void prepare_model_input(const float* x_t, int class_label, int timestep, int8_t
 void dequantize_output(const int8_t* output_int8, float* output_float) {
   const int size = MODEL_OUTPUT_HEIGHT * MODEL_OUTPUT_WIDTH * MODEL_OUTPUT_CHANNELS;
   for (int i = 0; i < size; i++) {
-    output_float[i] = (output_int8[i] - model_runner.output_zero_point_) * model_runner.output_scale_;
+    output_float[i] = (output_int8[i] - model_runner.get_output_zero_point()) * model_runner.get_output_scale();
   }
 }
 
 /**
- * Generate a single digit
+ * One-shot inference smoke test.
+ *
+ * Runs exactly one forward pass with an all-zero (zero-point) input.  This
+ * verifies that AllocateTensors(), the resolver, and the kernel can execute
+ * before any sampling loop is attempted.
+ */
+bool run_dummy_inference_test() {
+  const size_t input_size = MODEL_INPUT_SIZE;
+  const size_t output_size = MODEL_OUTPUT_SIZE;
+  
+  memset(model_input_int8,
+         (int)model_runner.get_input_zero_point(),
+         input_size);
+  
+  if (!model_runner.run_inference(model_input_int8, model_output_int8)) {
+    Serial.println("ERROR: Dummy inference failed");
+    return false;
+  }
+  
+  int min_value = 127;
+  int max_value = -128;
+  int64_t sum = 0;
+  for (size_t i = 0; i < output_size; ++i) {
+    const int value = model_output_int8[i];
+    if (value < min_value) min_value = value;
+    if (value > max_value) max_value = value;
+    sum += value;
+  }
+  
+  Serial.printf("Dummy inference OK: output INT8 min=%d max=%d mean=%.3f\n",
+                min_value, max_value, (double)sum / (double)output_size);
+  return true;
+}
+
+/**
+ * Generate a single digit using DDIM sampling
  * 
  * @param class_label Target digit (0-9)
  * @param num_steps DDIM steps (8, 16, 32)
@@ -141,7 +179,7 @@ void dequantize_output(const int8_t* output_int8, float* output_float) {
  * @param output_buffer Output float image [28*28]
  * @return Generation time in milliseconds
  */
-uint32_t generate_digit(int class_label, int num_steps, float eta, float* output_buffer) {
+uint32_t generate_digit_local(int class_label, int num_steps, float eta, float* output_buffer) {
   uint32_t start_time = millis();
   
   // Get DDIM timesteps
@@ -201,7 +239,7 @@ void process_serial_command(String cmd) {
     if (digit >= 0 && digit <= 9) {
       DEBUG_PRINTF("Generating digit %d...\n", digit);
       
-      uint32_t gen_time = generate_digit(digit, current_sampling_steps, current_eta, model_output_float);
+      uint32_t gen_time = generate_digit_local(digit, current_sampling_steps, current_eta, model_output_float);
       
       if (gen_time > 0) {
         oled_draw_digit(model_output_float, digit, gen_time, current_sampling_steps);
@@ -218,7 +256,7 @@ void process_serial_command(String cmd) {
     int digit = random(0, 10);
     DEBUG_PRINTF("Generating random digit %d...\n", digit);
     
-    uint32_t gen_time = generate_digit(digit, current_sampling_steps, current_eta, model_output_float);
+    uint32_t gen_time = generate_digit_local(digit, current_sampling_steps, current_eta, model_output_float);
     
     if (gen_time > 0) {
       oled_draw_digit(model_output_float, digit, gen_time, current_sampling_steps);
@@ -230,15 +268,15 @@ void process_serial_command(String cmd) {
   else if (cmd == "INFO") {
     // Show info
     Serial.println("=== TinyDiffusion-ESP32 Info ===");
-    Serial.printf("Model size: %u bytes\n", g_tiny_diffusion_model_len);
+    Serial.printf("Model size: %u bytes\n", g_model_len);
     Serial.printf("Tensor arena: %zu bytes\n", model_runner.get_arena_size());
     Serial.printf("Arena used: %zu bytes\n", model_runner.get_arena_used_bytes());
-    Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
-    Serial.printf("Largest free block: %d bytes\n", ESP.getMaxAllocHeap());
+    Serial.printf("Free heap: %lu bytes\n", ESP.getFreeHeap());
+    Serial.printf("Largest free block: %lu bytes\n", ESP.getMaxAllocHeap());
     Serial.printf("Sampling steps: %d\n", current_sampling_steps);
     Serial.printf("DDIM eta: %.2f\n", current_eta);
-    Serial.printf("Input quant: scale=%.6f, zp=%d\n", model_runner.input_scale_, model_runner.input_zero_point_);
-    Serial.printf("Output quant: scale=%.6f, zp=%d\n", model_runner.output_scale_, model_runner.output_zero_point_);
+    Serial.printf("Input quant: scale=%.6f, zp=%ld\n", model_runner.get_input_scale(), model_runner.get_input_zero_point());
+    Serial.printf("Output quant: scale=%.6f, zp=%ld\n", model_runner.get_output_scale(), model_runner.get_output_zero_point());
     Serial.println("================================");
   }
   else if (cmd.startsWith("STEPS ")) {
@@ -304,6 +342,12 @@ void setup() {
   
   Serial.println("Model loaded successfully");
   model_runner.print_model_info();
+  
+  // Smoke-test one forward pass before enabling the sampling loop.
+  if (!run_dummy_inference_test()) {
+    oled_draw_text("INFER ERROR", "Check Serial", "Reset to retry");
+    while (1) delay(1000);
+  }
   
   // Seed random for non-crypto uses
   randomSeed(esp_random());

@@ -35,7 +35,7 @@ static constexpr int kDDIMTimesteps32[32] = {99, 96, 93, 90, 87, 84, 81, 78, 74,
                                               49, 46, 43, 40, 37, 34, 31, 28, 24, 21, 18, 15, 12, 9, 6, 3};
 
 // Pointers to timestep arrays
-static constexpr int* kDDIMTimestepsPtr[] = {nullptr, nullptr, kDDIMTimesteps8, nullptr, nullptr, 
+static constexpr const int* kDDIMTimestepsPtr[] = {nullptr, nullptr, kDDIMTimesteps8, nullptr, nullptr, 
                                               nullptr, nullptr, nullptr, nullptr, nullptr,
                                               nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
                                               kDDIMTimesteps16};
