@@ -1,6 +1,7 @@
 <div align="center">
   <img src="assets/banner.png" width="100%" alt="TinyDiffusion ESP32 Banner"/>
 </div>
+
 # TinyDiffusion-ESP32
 
 **A complete, modular, reproducible Edge AI project that trains a tiny conditional diffusion model on MNIST and runs image generation entirely offline on an ESP32 DevKit V1 (ESP32-WROOM-32) without external PSRAM.**
