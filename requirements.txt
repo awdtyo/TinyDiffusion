@@ -1,0 +1,27 @@
+# TinyDiffusion-ESP32 Dependencies
+# Python 3.10 - 3.12 compatible (TensorFlow 2.16+ supports 3.12+)
+
+# Core ML
+tensorflow-cpu
+numpy>=1.24.0
+
+# Visualization
+matplotlib>=3.8.0
+Pillow>=10.0.0
+
+# Configuration
+PyYAML>=6.0.0
+
+# Utilities
+tqdm>=4.66.0
+
+# Jupyter
+jupyter>=1.0.0
+ipykernel>=6.27.0
+nbformat>=5.9.0
+
+# Testing
+pytest>=7.4.0
+
+# Note: For Python 3.13+, use tensorflow>=2.17.0
+# For Apple Silicon, use tensorflow-macos and tensorflow-metal instead

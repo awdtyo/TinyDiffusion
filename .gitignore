@@ -1,0 +1,62 @@
+# TinyDiffusion-ESP32 .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb~
+
+# Virtual Environments
+venv/
+env/
+.env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Artifacts and Models
+artifacts/
+*.tflite
+*.h5
+*.keras
+model_data.h
+
+# Logs
+*.log
+logs/
+tensorboard_logs/
+
+# ESP32/PlatformIO
+.pio/
+.pioenvs/
+platformio.ini.local
+*.bin
+*.elf
+*.map
+
+# Data
+data/
+*.npz
+*.npy
+
+# Temporary files
+*.tmp
+*.temp
