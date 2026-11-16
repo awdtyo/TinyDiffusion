@@ -76,11 +76,12 @@ class DDIMScheduler:
             return timesteps
         return self.ddim_timesteps[num_steps]
     
-    def ddim_step(self, x_t: np.ndarray, noise_pred: np.ndarray, 
+    def ddim_step(self, x_t: np.ndarray, pred: np.ndarray, 
                   t: int, t_prev: int, eta: float = None) -> np.ndarray:
         """
         Single DDIM denoising step.
         
+        For epsilon-prediction:
         DDIM update rule (from Song et al. 2020):
         x_{t-1} = sqrt(alpha_bar_{t-1}) * x_0_pred + sqrt(1 - alpha_bar_{t-1} - sigma_t^2) * epsilon_pred + sigma_t * noise
         
@@ -88,10 +89,19 @@ class DDIMScheduler:
         x_0_pred = (x_t - sqrt(1 - alpha_bar_t) * epsilon_pred) / sqrt(alpha_bar_t)
         sigma_t = eta * sqrt((1 - alpha_bar_{t-1}) / (1 - alpha_bar_t)) * sqrt(1 - alpha_bar_t / alpha_bar_{t-1})
         
+        For v-prediction:
+        x_0_pred = sqrt(alpha_bar_t) * x_t - sqrt(1 - alpha_bar_t) * v_pred
+        epsilon_pred = sqrt(1 - alpha_bar_t) * x_t + sqrt(alpha_bar_t) * v_pred
+        
+        Then use the same DDIM update rule with epsilon_pred.
+        
         For eta=0 (deterministic): sigma_t = 0
         """
         if eta is None:
             eta = self.eta
+        
+        # Get prediction type from noise_schedule config
+        prediction_type = getattr(self.noise_schedule, 'prediction_type', 'epsilon')
         
         # Get schedule values
         alpha_bar_t = self.schedule_arrays['alphas_cumprod'][t]
@@ -101,8 +111,15 @@ class DDIMScheduler:
         sqrt_alpha_bar_t_prev = np.sqrt(alpha_bar_t_prev)
         sqrt_one_minus_alpha_bar_t = np.sqrt(1.0 - alpha_bar_t)
         
-        # Predict x_0
-        x_0_pred = (x_t - sqrt_one_minus_alpha_bar_t * noise_pred) / sqrt_alpha_bar_t
+        if prediction_type == 'v':
+            # V-prediction: recover x_0 and epsilon from v prediction
+            v_pred = pred
+            x_0_pred = sqrt_alpha_bar_t * x_t - sqrt_one_minus_alpha_bar_t * v_pred
+            epsilon_pred = sqrt_one_minus_alpha_bar_t * x_t + sqrt_alpha_bar_t * v_pred
+        else:
+            # Epsilon-prediction (original)
+            epsilon_pred = pred
+            x_0_pred = (x_t - sqrt_one_minus_alpha_bar_t * epsilon_pred) / sqrt_alpha_bar_t
         
         # Clip x_0_pred to valid range for stability
         x_0_pred = np.clip(x_0_pred, -1.0, 1.0)
@@ -117,7 +134,7 @@ class DDIMScheduler:
             sigma_t = 0.0
         
         # Direction pointing to x_t
-        dir_xt = np.sqrt(1.0 - alpha_bar_t_prev - sigma_t**2) * noise_pred
+        dir_xt = np.sqrt(1.0 - alpha_bar_t_prev - sigma_t**2) * epsilon_pred
         
         # Random noise for stochasticity
         if eta > 0:
@@ -239,11 +256,14 @@ class DDIMScheduler:
         
         return x_t
     
-    def ddim_step_batch(self, x_t: np.ndarray, noise_pred: np.ndarray,
+    def ddim_step_batch(self, x_t: np.ndarray, pred: np.ndarray,
                         t: int, t_prev: int, eta: float = None) -> np.ndarray:
         """Batch version of DDIM step."""
         if eta is None:
             eta = self.eta
+        
+        # Get prediction type from noise_schedule config
+        prediction_type = getattr(self.noise_schedule, 'prediction_type', 'epsilon')
         
         alpha_bar_t = self.schedule_arrays['alphas_cumprod'][t]
         alpha_bar_t_prev = self.schedule_arrays['alphas_cumprod'][t_prev] if t_prev >= 0 else 1.0
@@ -252,8 +272,16 @@ class DDIMScheduler:
         sqrt_alpha_bar_t_prev = np.sqrt(alpha_bar_t_prev)
         sqrt_one_minus_alpha_bar_t = np.sqrt(1.0 - alpha_bar_t)
         
-        # Predict x_0
-        x_0_pred = (x_t - sqrt_one_minus_alpha_bar_t * noise_pred) / sqrt_alpha_bar_t
+        if prediction_type == 'v':
+            # V-prediction: recover x_0 and epsilon from v prediction
+            v_pred = pred
+            x_0_pred = sqrt_alpha_bar_t * x_t - sqrt_one_minus_alpha_bar_t * v_pred
+            epsilon_pred = sqrt_one_minus_alpha_bar_t * x_t + sqrt_alpha_bar_t * v_pred
+        else:
+            # Epsilon-prediction (original)
+            epsilon_pred = pred
+            x_0_pred = (x_t - sqrt_one_minus_alpha_bar_t * epsilon_pred) / sqrt_alpha_bar_t
+        
         x_0_pred = np.clip(x_0_pred, -1.0, 1.0)
         
         # Compute sigma_t
@@ -265,7 +293,7 @@ class DDIMScheduler:
         else:
             sigma_t = 0.0
         
-        dir_xt = np.sqrt(1.0 - alpha_bar_t_prev - sigma_t**2) * noise_pred
+        dir_xt = np.sqrt(1.0 - alpha_bar_t_prev - sigma_t**2) * epsilon_pred
         
         if eta > 0:
             noise = np.random.randn(*x_t.shape).astype(np.float32)

@@ -38,6 +38,7 @@ def main():
     print(f"Epochs: {config['training']['epochs']}")
     print(f"Batch size: {config['training']['batch_size']}")
     print(f"Learning rate: {config['training']['learning_rate']}")
+    print(f"Prediction type: {config.get('diffusion', {}).get('prediction_type', 'epsilon')}")
     print(f"Resume from: {args.resume}")
     print("=" * 60)
     

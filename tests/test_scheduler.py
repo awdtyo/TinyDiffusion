@@ -33,7 +33,7 @@ def test_ddim_timesteps_8():
     timesteps = scheduler.get_ddim_timesteps(8)
     
     assert len(timesteps) == 8
-    assert timesteps[0] == 84  # Start from high noise
+    assert timesteps[0] == 99  # Start from max noise (100 timesteps - 1)
     assert timesteps[-1] == 0  # End at clean
     assert np.all(np.diff(timesteps) < 0)  # Decreasing
 
@@ -47,7 +47,7 @@ def test_ddim_timesteps_16():
     timesteps = scheduler.get_ddim_timesteps(16)
     
     assert len(timesteps) == 16
-    assert timesteps[0] == 90
+    assert timesteps[0] == 99
     assert np.all(np.diff(timesteps) < 0)
 
 
@@ -60,7 +60,7 @@ def test_ddim_timesteps_32():
     timesteps = scheduler.get_ddim_timesteps(32)
     
     assert len(timesteps) == 32
-    assert timesteps[0] == 93
+    assert timesteps[0] == 99
     assert np.all(np.diff(timesteps) < 0)
 
 

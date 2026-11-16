@@ -41,10 +41,15 @@ class DiffusionTrainer:
         checkpoint_base = self.train_config.get('checkpoint_dir', 'artifacts/checkpoints')
         log_base = self.train_config.get('tensorboard', {}).get('log_dir', 'artifacts/logs')
         
-        # Append timestep suffix to isolate experiments
-        num_timesteps = self.config.get('diffusion', {}).get('num_timesteps', 100)
-        self.checkpoint_dir = f'{checkpoint_base}_{num_timesteps}'
-        self.log_dir = f'{log_base}_{num_timesteps}'
+        # Use experiment_name for isolation if provided, otherwise fall back to timestep suffix
+        experiment_name = self.train_config.get('experiment_name', None)
+        if experiment_name:
+            self.checkpoint_dir = f'{checkpoint_base}_{experiment_name}'
+            self.log_dir = f'{log_base}_{experiment_name}'
+        else:
+            num_timesteps = self.config.get('diffusion', {}).get('num_timesteps', 100)
+            self.checkpoint_dir = f'{checkpoint_base}_{num_timesteps}'
+            self.log_dir = f'{log_base}_{num_timesteps}'
         ensure_dir(self.checkpoint_dir)
         ensure_dir(self.log_dir)
     

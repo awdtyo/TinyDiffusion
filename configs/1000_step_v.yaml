@@ -1,0 +1,185 @@
+# TinyDiffusion-ESP32 Configuration — 1000-Step V-Prediction Experiment
+# Based on 1000_step.yaml with v-prediction target
+
+# Model Architecture
+model:
+  input_height: 28
+  input_width: 28
+  input_channels: 1
+  num_classes: 10
+  # Conditioning: 10 class maps + 1 timestep map = 11, concatenated with 1-channel image = 12
+  conditioning_channels: 11
+  total_input_channels: 12
+  
+  # Convolutional layers: [filters, kernel_size, activation]
+  # Layer 1: 8 filters, 3x3, ReLU
+  # Layer 2: 8 filters, 3x3, ReLU
+  # Layer 3: 12 filters, 3x3, ReLU
+  # Layer 4: 8 filters, 3x3, ReLU
+  # Layer 5: 1 filter, 3x3, Linear
+  conv_layers:
+    - filters: 8
+      kernel_size: 3
+      activation: "relu"
+    - filters: 8
+      kernel_size: 3
+      activation: "relu"
+    - filters: 12
+      kernel_size: 3
+      activation: "relu"
+    - filters: 8
+      kernel_size: 3
+      activation: "relu"
+    - filters: 1
+      kernel_size: 3
+      activation: "linear"
+  
+  # Expected parameter count: ~3,277
+  use_bias: true
+  padding: "same"
+
+# Diffusion Process
+diffusion:
+  # Noise schedule: "linear" or "cosine"
+  schedule_type: "linear"
+  # Number of training timesteps
+  num_timesteps: 1000
+  # Linear schedule parameters
+  beta_start: 0.0001
+  beta_end: 0.02
+  # Cosine schedule parameter
+  cosine_s: 0.008
+  # Timestep normalization: divide by num_timesteps to get [0, 1]
+  normalize_timestep: true
+  # V-prediction target
+  prediction_type: "v"  # "epsilon" or "v"
+
+# DDIM Sampling
+sampling:
+  # Default inference steps (can be 8, 16, 32)
+  default_steps: 8
+  # Supported step counts for experimentation
+  supported_steps: [8, 16, 32]
+  # DDIM eta parameter (0 = deterministic, 1 = DDPM stochastic)
+  eta: 0.0
+  # Use DDIM update rule
+  use_ddim: true
+
+# Training
+training:
+  batch_size: 64
+  epochs: 50
+  learning_rate: 0.001
+  # Adam optimizer parameters
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-7
+  # Learning rate scheduling
+  lr_schedule:
+    enabled: true
+    type: "cosine_decay"
+    warmup_epochs: 5
+    min_lr: 1.0e-5
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 10
+    restore_best_weights: true
+    monitor: "val_loss"
+  # Checkpointing
+  checkpoint:
+    enabled: true
+    save_best_only: true
+    monitor: "val_loss"
+    mode: "min"
+  # TensorBoard
+  tensorboard:
+    enabled: false
+    log_dir: "artifacts/logs_1000_v"
+  # Experiment name for isolation
+  experiment_name: "1000_v"
+  # Random seed for reproducibility
+  seed: 42
+  # Validation split
+  validation_split: 0.1
+  # Mixed precision (disable for CPU compatibility)
+  mixed_precision: false
+
+# Dataset
+dataset:
+  name: "mnist"
+  # Normalization to [-1, 1]
+  normalize_range: [-1, 1]
+  # Download automatically
+  auto_download: true
+  # Cache directory
+  cache_dir: "artifacts/data"
+  # Shuffle buffer
+  shuffle_buffer: 10000
+  # Prefetch
+  prefetch_buffer: 2
+
+# Quantization and Export
+quantization:
+  # Target: "int8" for full INT8 quantization
+  target: "int8"
+  # Representative dataset size for calibration
+  representative_samples: 500
+  # Input/output quantization
+  quantize_input: true
+  quantize_output: true
+  # Supported ops: TFLite built-in + SELECT_TF_OPS if needed
+  # We aim for TFLITE_BUILTINS only
+  target_ops: ["TFLITE_BUILTINS"]
+  # Inference type
+  inference_input_type: "int8"
+  inference_output_type: "int8"
+
+# Export
+export:
+  # SavedModel directory
+  saved_model_dir: "artifacts/saved_model_1000_v"
+  # Float32 TFLite model
+  float_tflite_path: "artifacts/model_float32_1000_v.tflite"
+  # INT8 TFLite model
+  int8_tflite_path: "artifacts/model_int8_1000_v.tflite"
+  # C header for ESP32
+  model_header_path: "esp32/include/model_data.h"
+  # C++ source containing the embedded model bytes
+  model_source_path: "esp32/src/model_data.cpp"
+  # Conversion report
+  conversion_report_path: "artifacts/conversion_report_1000_v.json"
+
+# ESP32 Deployment
+esp32:
+  # Tensor arena size (bytes) - adjust based on model size
+  tensor_arena_size: 70000
+  # Display configuration
+  display:
+    type: "SSD1306"
+    width: 128
+    height: 64
+    i2c_address: 0x3C
+    sda_pin: 21
+    scl_pin: 22
+    # Scale factor for 28x28 -> display
+    scale_factor: 2
+  # Serial baud rate
+  serial_baud: 115200
+  # Default sampling steps on device
+  default_sampling_steps: 8
+  # Random number generation for noise
+  use_hw_rng: true
+
+# Evaluation
+evaluation:
+  # Number of samples per class for visualization
+  samples_per_class: 5
+  # Classes to generate (0-9)
+  classes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  # Compare sampling steps
+  compare_steps: [8, 16, 32]
+  # Run lightweight classifier evaluation if available
+  classifier_evaluation: false
+  # Classifier model path (if using)
+  classifier_path: ""

@@ -19,6 +19,7 @@ class NoiseSchedule:
         self.beta_end = diff_config.get('beta_end', 0.02)
         self.cosine_s = diff_config.get('cosine_s', 0.008)
         self.normalize_timestep = diff_config.get('normalize_timestep', True)
+        self.prediction_type = diff_config.get('prediction_type', 'epsilon')
         
         self._compute_schedule()
     
@@ -132,11 +133,56 @@ def forward_diffusion(x_0: np.ndarray, timesteps: np.ndarray,
     return x_t.astype(np.float32)
 
 
+def forward_diffusion_v(x_0: np.ndarray, timesteps: np.ndarray,
+                        noise: np.ndarray, num_timesteps: int = 100,
+                        schedule_type: str = 'linear',
+                        beta_start: float = 0.0001,
+                        beta_end: float = 0.02) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Forward diffusion for v-prediction training.
+    
+    Returns:
+        x_t: Noisy images at timestep t
+        v_true: V-prediction target [batch, H, W, C]
+                v = sqrt(alpha_bar_t) * epsilon - sqrt(1 - alpha_bar_t) * x_0
+    """
+    if schedule_type == 'linear':
+        betas = np.linspace(beta_start, beta_end, num_timesteps, dtype=np.float32)
+    elif schedule_type == 'cosine':
+        steps = num_timesteps + 1
+        x = np.linspace(0, num_timesteps, steps, dtype=np.float32)
+        alphas_cumprod = np.cos(((x / num_timesteps) + 0.008) / (1 + 0.008) * np.pi * 0.5) ** 2
+        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+        betas = 1.0 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+        betas = np.clip(betas, 1e-8, 0.999)
+    else:
+        raise ValueError(f"Unknown schedule type: {schedule_type}")
+    
+    alphas = 1.0 - betas
+    alphas_cumprod = np.cumprod(alphas)
+    
+    # Get coefficients for each timestep
+    sqrt_alphas_cumprod_t = np.sqrt(alphas_cumprod[timesteps])
+    sqrt_one_minus_alphas_cumprod_t = np.sqrt(1.0 - alphas_cumprod[timesteps])
+    
+    # Reshape for broadcasting: [batch] -> [batch, 1, 1, 1]
+    sqrt_alphas_cumprod_t = sqrt_alphas_cumprod_t.reshape(-1, 1, 1, 1)
+    sqrt_one_minus_alphas_cumprod_t = sqrt_one_minus_alphas_cumprod_t.reshape(-1, 1, 1, 1)
+    
+    # Forward diffusion equation
+    x_t = sqrt_alphas_cumprod_t * x_0 + sqrt_one_minus_alphas_cumprod_t * noise
+    
+    # V-prediction target: v = sqrt(alpha_bar_t) * epsilon - sqrt(1 - alpha_bar_t) * x_0
+    v_true = sqrt_alphas_cumprod_t * noise - sqrt_one_minus_alphas_cumprod_t * x_0
+    
+    return x_t.astype(np.float32), v_true.astype(np.float32)
+
+
 def forward_diffusion_tf(x_0: tf.Tensor, timesteps: tf.Tensor, 
                          noise: tf.Tensor, 
                          sqrt_alphas_cumprod: tf.Tensor,
                          sqrt_one_minus_alphas_cumprod: tf.Tensor) -> tf.Tensor:
-    """TensorFlow version of forward diffusion for training."""
+    """TensorFlow version of forward diffusion for training (epsilon prediction)."""
     # Gather coefficients for each timestep
     sqrt_alpha_bar_t = tf.gather(sqrt_alphas_cumprod, timesteps)
     sqrt_one_minus_alpha_bar_t = tf.gather(sqrt_one_minus_alphas_cumprod, timesteps)
@@ -148,6 +194,28 @@ def forward_diffusion_tf(x_0: tf.Tensor, timesteps: tf.Tensor,
     # Forward diffusion
     x_t = sqrt_alpha_bar_t * x_0 + sqrt_one_minus_alpha_bar_t * noise
     return x_t
+
+
+def forward_diffusion_v_tf(x_0: tf.Tensor, timesteps: tf.Tensor,
+                           noise: tf.Tensor,
+                           sqrt_alphas_cumprod: tf.Tensor,
+                           sqrt_one_minus_alphas_cumprod: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+    """TensorFlow version of forward diffusion for v-prediction training."""
+    # Gather coefficients for each timestep
+    sqrt_alpha_bar_t = tf.gather(sqrt_alphas_cumprod, timesteps)
+    sqrt_one_minus_alpha_bar_t = tf.gather(sqrt_one_minus_alphas_cumprod, timesteps)
+    
+    # Reshape for broadcasting
+    sqrt_alpha_bar_t = tf.reshape(sqrt_alpha_bar_t, [-1, 1, 1, 1])
+    sqrt_one_minus_alpha_bar_t = tf.reshape(sqrt_one_minus_alpha_bar_t, [-1, 1, 1, 1])
+    
+    # Forward diffusion
+    x_t = sqrt_alpha_bar_t * x_0 + sqrt_one_minus_alpha_bar_t * noise
+    
+    # V-prediction target: v = sqrt(alpha_bar_t) * epsilon - sqrt(1 - alpha_bar_t) * x_0
+    v_true = sqrt_alpha_bar_t * noise - sqrt_one_minus_alpha_bar_t * x_0
+    
+    return x_t, v_true
 
 
 def sample_timesteps(batch_size: int, num_timesteps: int) -> np.ndarray:
