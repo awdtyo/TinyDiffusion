@@ -167,6 +167,12 @@ All hyperparameters and settings are centralized in `configs/default.yaml`:
 
 Modify this file to experiment without changing code.
 
+## Model Architecture
+
+<div align="center">
+  <img src="assets/architecture.png" width="100%" alt="TinyDiffusion ESP32 Banner"/>
+</div
+
 ## Hardware Setup
 
 ### ESP32 DevKit V1 + SSD1306 OLED
