@@ -1,0 +1,188 @@
+# TinyDiffusion-ESP32 v2.1 — Extreme Memory Optimization Config
+# Ultra-Compact conditional diffusion model for MNIST on ESP32-WROOM-32 without PSRAM
+# Target: < 85 KB tensor arena, fits in 108 KB largest free block
+
+# Model Architecture
+model:
+  input_height: 28
+  input_width: 28
+  input_channels: 1
+  num_classes: 10
+  conditioning_channels: 11
+  total_input_channels: 12
+  
+  architecture: "tiny_unet_v2_1"  # "conditional_cnn" or "tiny_unet_v1" or "tiny_unet_v2" or "tiny_unet_v2_1"
+  
+  # Tiny U-Net v2.1 Ultra-Compact specific configuration
+  tiny_unet_v2_1:
+    # Channel progression: [encoder1_C1, encoder2_C2, bottleneck_C3, decoder2_C4]
+    # Target configurations: [4,6,8,4], [4,8,8,4], [6,8,8,6]
+    channels: [6, 8, 8, 6]
+    
+    # Initial convolution
+    initial_conv_kernel: 3
+    
+    # Encoder configuration (2 levels)
+    encoder:
+      - resolution: [28, 28]
+        channels: 6
+        num_blocks: 1
+      - resolution: [14, 14]
+        channels: 8
+        num_blocks: 1
+    
+    # Bottleneck configuration
+    bottleneck:
+      resolution: [7, 7]
+      channels: 8
+      num_blocks: 1
+    
+    # Decoder configuration (2 levels)
+    decoder:
+      - resolution: [14, 14]
+        channels: 8
+        num_blocks: 1
+      - resolution: [28, 28]
+        channels: 6
+        num_blocks: 1
+    
+    # Output
+    output_channels: 1
+    
+    # Residual block configuration (no FiLM)
+    residual_block:
+      kernel_size: 3
+      activation: "relu"
+      use_bias: true
+      padding: "same"
+    
+    # Downsampling
+    downsample:
+      type: "strided_conv"
+      kernel_size: 3
+      stride: 2
+    
+    # Upsampling - bilinear resize + Conv2D (no Conv2DTranspose, no TILE)
+    upsample:
+      type: "bilinear_conv"
+      kernel_size: 3
+  
+  # Legacy CNN configuration (preserved for compatibility)
+  conv_layers:
+    - filters: 8
+      kernel_size: 3
+      activation: "relu"
+    - filters: 8
+      kernel_size: 3
+      activation: "relu"
+    - filters: 12
+      kernel_size: 3
+      activation: "relu"
+    - filters: 8
+      kernel_size: 3
+      activation: "relu"
+    - filters: 1
+      kernel_size: 3
+      activation: "linear"
+  
+  use_bias: true
+  padding: "same"
+
+# Diffusion Process
+diffusion:
+  schedule_type: "linear"
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+  cosine_s: 0.008
+  normalize_timestep: true
+  prediction_type: "v"  # "epsilon" or "v"
+
+# DDIM Sampling
+sampling:
+  default_steps: 8
+  supported_steps: [8, 16, 32]
+  eta: 0.0
+  use_ddim: true
+
+# Training
+training:
+  batch_size: 64
+  epochs: 50
+  learning_rate: 0.001
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-7
+  lr_schedule:
+    enabled: true
+    type: "cosine_decay"
+    warmup_epochs: 5
+    min_lr: 1.0e-5
+  early_stopping:
+    enabled: true
+    patience: 10
+    restore_best_weights: true
+    monitor: "val_loss"
+  checkpoint:
+    enabled: true
+    save_best_only: true
+    monitor: "val_loss"
+    mode: "min"
+  tensorboard:
+    enabled: false
+    log_dir: "artifacts/logs_tiny_unet_v2_1"
+  experiment_name: "tiny_unet_v2_1"
+  seed: 42
+  validation_split: 0.1
+  mixed_precision: false
+
+# Dataset
+dataset:
+  name: "mnist"
+  normalize_range: [-1, 1]
+  auto_download: true
+  cache_dir: "artifacts/data"
+  shuffle_buffer: 10000
+  prefetch_buffer: 2
+
+# Quantization and Export
+quantization:
+  target: "int8"
+  representative_samples: 500
+  quantize_input: true
+  quantize_output: true
+  target_ops: ["TFLITE_BUILTINS"]
+  inference_input_type: "int8"
+  inference_output_type: "int8"
+
+# Export
+export:
+  saved_model_dir: "artifacts/saved_model_tiny_unet_v2_1"
+  float_tflite_path: "artifacts/tflite_tiny_unet_v2_1/model_float32.tflite"
+  int8_tflite_path: "artifacts/tflite_tiny_unet_v2_1/model_int8.tflite"
+  model_header_path: "esp32_v2_1/include/model_data.h"
+  model_source_path: "esp32_v2_1/src/model_data.cpp"
+  conversion_report_path: "artifacts/tflite_tiny_unet_v2_1/conversion_report.json"
+
+# ESP32 Deployment
+esp32:
+  tensor_arena_size: 85000
+  display:
+    type: "SSD1306"
+    width: 128
+    height: 64
+    i2c_address: 0x3C
+    sda_pin: 21
+    scl_pin: 22
+    scale_factor: 2
+  serial_baud: 115200
+  default_sampling_steps: 8
+  use_hw_rng: true
+
+# Evaluation
+evaluation:
+  samples_per_class: 5
+  classes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  compare_steps: [8, 16, 32]
+  classifier_evaluation: false
+  classifier_path: ""
